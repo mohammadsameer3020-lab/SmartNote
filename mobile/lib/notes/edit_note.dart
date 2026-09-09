@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile/models/note_model.dart';
 
 class EditNote extends StatefulWidget {
@@ -12,32 +14,48 @@ class EditNote extends StatefulWidget {
 }
 
 class _EditNoteState extends State<EditNote> {
-  // =========================
+  // =========================================================
   // الألوان
-  // =========================
+  // =========================================================
 
   static const Color creamyBackground = Color(0xFFFAF6E9);
   static const Color titleColor = Color(0xFF8B8155);
   static const Color hintColor = Color(0xFFB5A882);
   static const Color accentColor = Color(0xFFFFB300);
 
-  // =========================
+  // =========================================================
   // Controllers
-  // =========================
+  // =========================================================
 
   late TextEditingController _titleController;
   late TextEditingController _contentController;
 
-  // =========================
+  // =========================================================
   // التصنيفات
-  // =========================
+  // =========================================================
 
   List<String> _categories = [];
 
   String _selectedCategory = 'غير مصنف';
 
+  // =========================================================
+  // حالات الصفحة
+  // =========================================================
+
   bool _isLoading = false;
   bool _isLoadingCategories = true;
+
+  // =========================================================
+  // المستخدم الحالي
+  // =========================================================
+
+  User? get _currentUser {
+    return FirebaseAuth.instance.currentUser;
+  }
+
+  // =========================================================
+  // initState
+  // =========================================================
 
   @override
   void initState() {
@@ -47,7 +65,6 @@ class _EditNoteState extends State<EditNote> {
 
     _contentController = TextEditingController(text: widget.note.content);
 
-    // التصنيف الموجود مع الملاحظة
     final String currentCategory = widget.note.category.trim();
 
     if (currentCategory.isNotEmpty) {
@@ -56,63 +73,75 @@ class _EditNoteState extends State<EditNote> {
       _selectedCategory = 'غير مصنف';
     }
 
-    // جلب التصنيفات من Firestore
     _fetchCategories();
   }
 
   // =========================================================
-  // جلب التصنيفات من Firestore
+  // جلب تصنيفات المستخدم الحالي
   // =========================================================
 
   Future<void> _fetchCategories() async {
     try {
-      debugPrint('==============================');
-      debugPrint('بدء جلب التصنيفات...');
-      debugPrint('Collection: categories');
+      final User? user = _currentUser;
+
+      if (user == null) {
+        if (!mounted) return;
+
+        setState(() {
+          _categories = ['غير مصنف'];
+          _isLoadingCategories = false;
+        });
+
+        return;
+      }
 
       final QuerySnapshot<Map<String, dynamic>> snapshot =
-          await FirebaseFirestore.instance.collection('categories').get();
+          await FirebaseFirestore.instance
+              .collection('categories')
+              .where('uid', isEqualTo: user.uid)
+              .get();
 
-      debugPrint('عدد مستندات التصنيفات: ${snapshot.docs.length}');
-
-      final List<String> loadedCategories = [];
+      final List<String> loadedCategories = ['غير مصنف'];
 
       for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
           in snapshot.docs) {
         final Map<String, dynamic> data = doc.data();
 
-        debugPrint('Category Document: ${doc.id}');
-
-        debugPrint('Category Data: $data');
-
-        // التصنيفات عندك تحفظ في الحقل name
         final dynamic rawName = data['name'];
 
         if (rawName == null) {
           continue;
         }
 
-        final String name = rawName.toString().trim();
+        final String categoryName = rawName.toString().trim();
 
-        if (name.isEmpty) {
+        if (categoryName.isEmpty) {
           continue;
         }
 
-        if (!loadedCategories.contains(name)) {
-          loadedCategories.add(name);
+        final bool alreadyExists = loadedCategories.any(
+          (category) =>
+              category.trim().toLowerCase() ==
+              categoryName.trim().toLowerCase(),
+        );
+
+        if (!alreadyExists) {
+          loadedCategories.add(categoryName);
         }
       }
 
-      // إضافة "غير مصنف" دائمًا في البداية
-      if (!loadedCategories.contains('غير مصنف')) {
-        loadedCategories.insert(0, 'غير مصنف');
-      }
+      // إذا كان التصنيف الحالي للملاحظة غير موجود
+      // نضيفه مؤقتًا حتى لا يختفي من الاختيار.
+      if (_selectedCategory != 'غير مصنف') {
+        final bool currentCategoryExists = loadedCategories.any(
+          (category) =>
+              category.trim().toLowerCase() ==
+              _selectedCategory.trim().toLowerCase(),
+        );
 
-      // إذا كان تصنيف الملاحظة غير موجود في Firestore
-      // نضيفه للقائمة حتى لا يختفي
-      if (_selectedCategory != 'غير مصنف' &&
-          !loadedCategories.contains(_selectedCategory)) {
-        loadedCategories.add(_selectedCategory);
+        if (!currentCategoryExists) {
+          loadedCategories.add(_selectedCategory);
+        }
       }
 
       if (!mounted) return;
@@ -121,11 +150,6 @@ class _EditNoteState extends State<EditNote> {
         _categories = loadedCategories;
         _isLoadingCategories = false;
       });
-
-      debugPrint('التصنيفات النهائية: $_categories');
-
-      debugPrint('انتهى جلب التصنيفات');
-      debugPrint('==============================');
     } catch (e) {
       debugPrint('ERROR FETCHING CATEGORIES: $e');
 
@@ -140,53 +164,96 @@ class _EditNoteState extends State<EditNote> {
 
         _isLoadingCategories = false;
       });
+
+      _showMessage('تعذر تحميل التصنيفات');
     }
   }
 
   // =========================================================
-  // تحديث الملاحظة
+  // التحقق من ملكية الملاحظة
+  // =========================================================
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _getAuthorizedNote() async {
+    final User? user = _currentUser;
+
+    if (user == null) {
+      throw Exception('USER_NOT_LOGGED_IN');
+    }
+
+    final DocumentSnapshot<Map<String, dynamic>> snapshot =
+        await FirebaseFirestore.instance
+            .collection('notes')
+            .doc(widget.note.id)
+            .get();
+
+    if (!snapshot.exists) {
+      throw Exception('NOTE_NOT_FOUND');
+    }
+
+    final Map<String, dynamic>? data = snapshot.data();
+
+    if (data == null) {
+      throw Exception('NOTE_DATA_NOT_FOUND');
+    }
+
+    final String noteUserId = data['userId']?.toString() ?? '';
+
+    if (noteUserId.isEmpty || noteUserId != user.uid) {
+      throw Exception('UNAUTHORIZED');
+    }
+
+    return snapshot;
+  }
+
+  // =========================================================
+  // تحديث نص الملاحظة
   // =========================================================
 
   Future<void> _updateNote() async {
+    if (_isLoading) {
+      return;
+    }
+
+    final User? user = _currentUser;
+
+    if (user == null) {
+      _showMessage('يجب تسجيل الدخول أولاً');
+      return;
+    }
+
     final String title = _titleController.text.trim();
 
     final String content = _contentController.text.trim();
 
-    // إذا كانت الملاحظة فارغة
     if (title.isEmpty && content.isEmpty) {
-      Navigator.pop(context, false);
+      _showMessage('لا يمكن حفظ ملاحظة فارغة');
       return;
     }
 
-    if (_isLoading) return;
-
     FocusScope.of(context).unfocus();
+
+    if (!mounted) return;
 
     setState(() {
       _isLoading = true;
     });
 
     try {
+      await _getAuthorizedNote();
+
+      final String categoryToSave = _selectedCategory.trim() == 'غير مصنف'
+          ? ''
+          : _selectedCategory.trim();
+
       await FirebaseFirestore.instance
           .collection('notes')
           .doc(widget.note.id)
           .update({
             'title': title,
             'content': content,
-
-            // حفظ التصنيف
-            'category': _selectedCategory == 'غير مصنف'
-                ? ''
-                : _selectedCategory,
-
+            'category': categoryToSave,
             'updatedAt': FieldValue.serverTimestamp(),
           });
-
-      if (!mounted) return;
-
-      Navigator.pop(context, true);
-    } catch (e) {
-      debugPrint('Error updating note: $e');
 
       if (!mounted) return;
 
@@ -194,15 +261,222 @@ class _EditNoteState extends State<EditNote> {
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'حدث خطأ أثناء تعديل الملاحظة',
-            textAlign: TextAlign.center,
+      Navigator.pop(context, true);
+    } catch (e) {
+      debugPrint('ERROR UPDATING NOTE: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      _handleFirestoreError(e);
+    }
+  }
+
+  // =========================================================
+  // تثبيت / إلغاء تثبيت
+  // =========================================================
+
+  Future<void> _togglePinned() async {
+    if (_isLoading) return;
+
+    try {
+      final DocumentSnapshot<Map<String, dynamic>> snapshot =
+          await _getAuthorizedNote();
+
+      final Map<String, dynamic> data = snapshot.data() ?? {};
+
+      final bool currentPinned = data['isPinned'] == true;
+
+      final bool newPinned = !currentPinned;
+
+      await FirebaseFirestore.instance
+          .collection('notes')
+          .doc(widget.note.id)
+          .update({
+            'isPinned': newPinned,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+      if (!mounted) return;
+
+      _showMessage(newPinned ? 'تم تثبيت الملاحظة' : 'تم إلغاء تثبيت الملاحظة');
+
+      setState(() {});
+    } catch (e) {
+      debugPrint('ERROR TOGGLE PINNED: $e');
+
+      _handleFirestoreError(e);
+    }
+  }
+
+  // =========================================================
+  // إخفاء / إظهار
+  // =========================================================
+
+  Future<void> _toggleHidden() async {
+    if (_isLoading) return;
+
+    try {
+      final DocumentSnapshot<Map<String, dynamic>> snapshot =
+          await _getAuthorizedNote();
+
+      final Map<String, dynamic> data = snapshot.data() ?? {};
+
+      final bool currentHidden = data['isHidden'] == true;
+
+      final bool newHidden = !currentHidden;
+
+      await FirebaseFirestore.instance
+          .collection('notes')
+          .doc(widget.note.id)
+          .update({
+            'isHidden': newHidden,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+      if (!mounted) return;
+
+      _showMessage(newHidden ? 'تم إخفاء الملاحظة' : 'تم إظهار الملاحظة');
+
+      setState(() {});
+    } catch (e) {
+      debugPrint('ERROR TOGGLE HIDDEN: $e');
+
+      _handleFirestoreError(e);
+    }
+  }
+
+  // =========================================================
+  // نسخ الملاحظة
+  // =========================================================
+
+  Future<void> _copyNote() async {
+    final String title = _titleController.text.trim();
+
+    final String content = _contentController.text.trim();
+
+    String text = '';
+
+    if (title.isNotEmpty) {
+      text += title;
+    }
+
+    if (content.isNotEmpty) {
+      if (text.isNotEmpty) {
+        text += '\n\n';
+      }
+
+      text += content;
+    }
+
+    if (text.isEmpty) {
+      _showMessage('لا يوجد محتوى لنسخه');
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: text));
+
+    if (!mounted) return;
+
+    _showMessage('تم نسخ الملاحظة');
+  }
+
+  // =========================================================
+  // حذف الملاحظة
+  // =========================================================
+
+  Future<void> _deleteNote() async {
+    if (_isLoading) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: creamyBackground,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.delete_outline, color: Colors.red),
+                SizedBox(width: 10),
+                Text(
+                  'حذف الملاحظة',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            content: const Text(
+              'هل أنت متأكد من حذف هذه الملاحظة؟\nلا يمكن التراجع عن هذا الإجراء.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext, false);
+                },
+                child: const Text(
+                  'إلغاء',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  Navigator.pop(dialogContext, true);
+                },
+                child: const Text('حذف'),
+              ),
+            ],
           ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _getAuthorizedNote();
+
+      await FirebaseFirestore.instance
+          .collection('notes')
+          .doc(widget.note.id)
+          .delete();
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      // يرجع true حتى يقوم NoteHomeScreen
+      // بتحديث قائمة الملاحظات.
+      Navigator.pop(context, true);
+    } catch (e) {
+      debugPrint('ERROR DELETE NOTE: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      _handleFirestoreError(e);
     }
   }
 
@@ -211,7 +485,7 @@ class _EditNoteState extends State<EditNote> {
   // =========================================================
 
   void _showCategoryPicker() {
-    if (_isLoadingCategories) {
+    if (_isLoadingCategories || _isLoading) {
       return;
     }
 
@@ -222,7 +496,7 @@ class _EditNoteState extends State<EditNote> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (BuildContext context) {
+      builder: (BuildContext bottomSheetContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
@@ -231,7 +505,6 @@ class _EditNoteState extends State<EditNote> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // المقبض العلوي
                   Container(
                     width: 45,
                     height: 5,
@@ -243,7 +516,6 @@ class _EditNoteState extends State<EditNote> {
 
                   const SizedBox(height: 18),
 
-                  // العنوان
                   Row(
                     children: [
                       Container(
@@ -277,7 +549,6 @@ class _EditNoteState extends State<EditNote> {
 
                   const SizedBox(height: 15),
 
-                  // قائمة التصنيفات
                   if (_categories.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(25),
@@ -296,7 +567,9 @@ class _EditNoteState extends State<EditNote> {
                         itemBuilder: (BuildContext context, int index) {
                           final String category = _categories[index];
 
-                          final bool isSelected = category == _selectedCategory;
+                          final bool isSelected =
+                              category.trim().toLowerCase() ==
+                              _selectedCategory.trim().toLowerCase();
 
                           return Material(
                             color: Colors.transparent,
@@ -307,7 +580,7 @@ class _EditNoteState extends State<EditNote> {
                                   _selectedCategory = category;
                                 });
 
-                                Navigator.pop(context);
+                                Navigator.pop(bottomSheetContext);
                               },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
@@ -352,6 +625,8 @@ class _EditNoteState extends State<EditNote> {
                                     Expanded(
                                       child: Text(
                                         category,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                           fontSize: 15,
                                           fontWeight: isSelected
@@ -388,6 +663,287 @@ class _EditNoteState extends State<EditNote> {
   }
 
   // =========================================================
+  // قائمة الثلاث نقاط
+  // =========================================================
+
+  Future<void> _showMoreMenu() async {
+    if (_isLoading) return;
+
+    try {
+      final data = await _getAuthorizedNote();
+
+      if (!mounted) return;
+
+      final bool isPinned = data['isPinned'] == true;
+      final bool isHidden = data['isHidden'] == true;
+
+      showGeneralDialog(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: 'إغلاق',
+        barrierColor: Colors.black.withOpacity(0.25),
+        transitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // =========================
+                        // رأس القائمة
+                        // =========================
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: accentColor.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  Icons.more_horiz_rounded,
+                                  color: accentColor,
+                                  size: 24,
+                                ),
+                              ),
+
+                              const SizedBox(width: 12),
+
+                              const Text(
+                                'خيارات الملاحظة',
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const Divider(height: 1),
+
+                        // =========================
+                        // تثبيت
+                        // =========================
+                        _buildMenuItem(
+                          icon: isPinned
+                              ? Icons.push_pin
+                              : Icons.push_pin_outlined,
+                          title: isPinned
+                              ? 'إلغاء تثبيت الملاحظة'
+                              : 'تثبيت الملاحظة',
+                          onTap: () {
+                            Navigator.pop(context);
+                            _togglePinned();
+                          },
+                        ),
+
+                        // =========================
+                        // إخفاء
+                        // =========================
+                        _buildMenuItem(
+                          icon: isHidden
+                              ? Icons.visibility
+                              : Icons.visibility_off_outlined,
+                          title: isHidden ? 'إظهار الملاحظة' : 'إخفاء الملاحظة',
+                          onTap: () {
+                            Navigator.pop(context);
+                            _toggleHidden();
+                          },
+                        ),
+
+                        // =========================
+                        // تغيير التصنيف
+                        // =========================
+                        _buildMenuItem(
+                          icon: Icons.folder_outlined,
+                          title: 'تغيير التصنيف',
+                          onTap: () {
+                            Navigator.pop(context);
+
+                            Future.delayed(
+                              const Duration(milliseconds: 150),
+                              () {
+                                if (mounted) {
+                                  _showCategoryPicker();
+                                }
+                              },
+                            );
+                          },
+                        ),
+
+                        // =========================
+                        // نسخ الملاحظة
+                        // =========================
+                        _buildMenuItem(
+                          icon: Icons.copy_outlined,
+                          title: 'نسخ الملاحظة',
+                          onTap: () {
+                            Navigator.pop(context);
+                            _copyNote();
+                          },
+                        ),
+
+                        // =========================
+                        // حذف الملاحظة
+                        // =========================
+                        _buildMenuItem(
+                          icon: Icons.delete_outline,
+                          title: 'حذف الملاحظة',
+                          iconColor: Colors.red,
+
+                          onTap: () {
+                            Navigator.pop(context);
+
+                            Future.delayed(
+                              const Duration(milliseconds: 150),
+                              () {
+                                if (mounted) {
+                                  _deleteNote();
+                                }
+                              },
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 10),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+
+        // =========================
+        // حركة النافذة من الأعلى
+        // =========================
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          final curvedAnimation = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -1),
+              end: Offset.zero,
+            ).animate(curvedAnimation),
+            child: child,
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _handleFirestoreError(e);
+    }
+  }
+
+  // =========================================================
+  // عنصر في قائمة الخيارات
+  // =========================================================
+
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    Color iconColor = Colors.black54,
+    Color textColor = Colors.black87,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: iconColor.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 22),
+                ),
+
+                const SizedBox(width: 13),
+
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: textColor,
+                    ),
+                  ),
+                ),
+
+                Icon(
+                  Icons.arrow_back_ios_new,
+                  size: 15,
+                  color: iconColor.withOpacity(0.45),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =========================================================
+  // معالجة أخطاء Firestore
+  // =========================================================
+
+  void _handleFirestoreError(Object error) {
+    if (!mounted) return;
+
+    final String message = error.toString();
+
+    if (message.contains('USER_NOT_LOGGED_IN')) {
+      _showMessage('يجب تسجيل الدخول أولاً');
+    } else if (message.contains('NOTE_NOT_FOUND')) {
+      _showMessage('الملاحظة غير موجودة');
+    } else if (message.contains('UNAUTHORIZED')) {
+      _showMessage('لا يمكنك تنفيذ هذا الإجراء على هذه الملاحظة');
+    } else if (message.contains('permission-denied')) {
+      _showMessage('ليس لديك صلاحية لتنفيذ هذا الإجراء');
+    } else {
+      _showMessage('حدث خطأ، حاول مرة أخرى');
+    }
+  }
+
+  // =========================================================
   // التاريخ والوقت
   // =========================================================
 
@@ -403,21 +959,37 @@ class _EditNoteState extends State<EditNote> {
         final DateTime date = createdAt.toDate();
 
         final int hour = date.hour;
-        final int minute = date.minute;
 
-        final String formattedHour = hour.toString();
+        final int minute = date.minute;
 
         final String formattedMinute = minute.toString().padLeft(2, '0');
 
-        return 'اليوم، $formattedHour:$formattedMinute';
+        return 'اليوم، $hour:$formattedMinute';
       }
 
       return 'اليوم';
     } catch (e) {
-      debugPrint('Date error: $e');
+      debugPrint('DATE ERROR: $e');
 
       return 'اليوم';
     }
+  }
+
+  // =========================================================
+  // عرض رسالة
+  // =========================================================
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, textAlign: TextAlign.center),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   // =========================================================
@@ -443,17 +1015,18 @@ class _EditNoteState extends State<EditNote> {
       child: Scaffold(
         backgroundColor: creamyBackground,
 
-        // ================================================
+        // =====================================================
         // AppBar
-        // ================================================
+        // =====================================================
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
           surfaceTintColor: Colors.transparent,
-
           automaticallyImplyLeading: false,
 
-          // علامة الصح للحفظ
+          // ===================================================
+          // زر الحفظ
+          // ===================================================
           leading: IconButton(
             onPressed: _isLoading ? null : _updateNote,
             icon: Container(
@@ -475,9 +1048,11 @@ class _EditNoteState extends State<EditNote> {
             ),
           ),
 
+          // ===================================================
+          // العنوان والتصنيف
+          // ===================================================
           title: Row(
             children: [
-              // زر الرجوع
               IconButton(
                 icon: const Icon(
                   Icons.arrow_back_ios,
@@ -493,46 +1068,48 @@ class _EditNoteState extends State<EditNote> {
 
               const SizedBox(width: 4),
 
-              // التصنيف
-              GestureDetector(
-                onTap: _showCategoryPicker,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _isLoadingCategories
-                            ? 'جاري التحميل...'
-                            : _selectedCategory,
-                        style: const TextStyle(
-                          color: Colors.black87,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
+              Flexible(
+                child: GestureDetector(
+                  onTap: _showCategoryPicker,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _isLoadingCategories
+                                ? 'جاري التحميل...'
+                                : _selectedCategory,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         ),
-                      ),
-
-                      const SizedBox(width: 4),
-
-                      const Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 18,
-                        color: Colors.black54,
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: Colors.black54,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ],
           ),
 
+          // ===================================================
+          // أزرار AppBar
+          // ===================================================
           actions: [
             // Undo
             IconButton(
@@ -556,17 +1133,19 @@ class _EditNoteState extends State<EditNote> {
               onPressed: () {},
             ),
 
-            // More
+            // =================================================
+            // الثلاث نقاط
+            // =================================================
             IconButton(
               icon: const Icon(Icons.more_vert, color: Colors.black54),
-              onPressed: () {},
+              onPressed: _isLoading ? null : _showMoreMenu,
             ),
           ],
         ),
 
-        // ================================================
+        // =====================================================
         // Body
-        // ================================================
+        // =====================================================
         body: _isLoading
             ? const Center(child: CircularProgressIndicator(color: accentColor))
             : Padding(
@@ -574,9 +1153,9 @@ class _EditNoteState extends State<EditNote> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ======================================
-                    // التاريخ والوقت
-                    // ======================================
+                    // =========================================
+                    // التاريخ
+                    // =========================================
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
@@ -589,9 +1168,7 @@ class _EditNoteState extends State<EditNote> {
                               fontSize: 12,
                             ),
                           ),
-
                           const SizedBox(width: 4),
-
                           const Icon(
                             Icons.access_time,
                             size: 14,
@@ -603,11 +1180,12 @@ class _EditNoteState extends State<EditNote> {
 
                     const SizedBox(height: 8),
 
-                    // ======================================
+                    // =========================================
                     // العنوان
-                    // ======================================
+                    // =========================================
                     TextField(
                       controller: _titleController,
+                      textInputAction: TextInputAction.next,
                       style: const TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.bold,
@@ -628,9 +1206,9 @@ class _EditNoteState extends State<EditNote> {
 
                     const SizedBox(height: 10),
 
-                    // ======================================
+                    // =========================================
                     // المحتوى
-                    // ======================================
+                    // =========================================
                     Expanded(
                       child: TextField(
                         controller: _contentController,
