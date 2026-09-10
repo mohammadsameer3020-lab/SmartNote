@@ -46,7 +46,7 @@ class _AddUserAndCategoryPageState extends State<AddUserAndCategoryPage> {
       if (!mounted) return;
 
       // العودة للصفحة السابقة أو الانتقال للـ home حسب رغبتك
-      Navigator.of(context).pushReplacementNamed("NoteHomeScreen");
+      Navigator.of(context).pop("NoteHomeScreen");
     } catch (e) {
       debugPrint('FULL FIREBASE ERROR: $e'); // ابحث عن هذا في الـ Debug Console
 
@@ -91,14 +91,6 @@ class _AddUserAndCategoryPageState extends State<AddUserAndCategoryPage> {
               color: textDark,
               fontSize: 18,
               fontWeight: FontWeight.w800,
-            ),
-          ),
-          leading: IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(
-              Icons.arrow_forward_ios_rounded,
-              color: textDark,
-              size: 20,
             ),
           ),
         ),

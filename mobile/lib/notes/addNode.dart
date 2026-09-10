@@ -14,19 +14,28 @@ class _AddNotePageState extends State<AddNotePage> {
   // الألوان
   // ============================================================
 
-  static const Color paperColor = Color(0xFFFFFBE6);
+  static const Color paperColor = Color(0xFFFFFDF2);
+  static const Color surfaceColor = Color(0xFFFFFEF8);
+
   static const Color textColor = Color(0xFF292929);
   static const Color secondaryText = Color(0xFF817A60);
+  static const Color lightText = Color(0xFFADA68B);
+
   static const Color accentColor = Color(0xFFFFA000);
+  static const Color accentLight = Color(0xFFFFF2D2);
+
+  static const Color dividerColor = Color(0xFFEFEAD7);
 
   // ============================================================
   // Controllers
   // ============================================================
 
   final TextEditingController titleController = TextEditingController();
+
   final TextEditingController contentController = TextEditingController();
 
   final FocusNode titleFocusNode = FocusNode();
+
   final FocusNode contentFocusNode = FocusNode();
 
   // ============================================================
@@ -46,41 +55,40 @@ class _AddNotePageState extends State<AddNotePage> {
   // Undo / Redo
   // ============================================================
 
+  String _previousTitle = '';
+  String _previousContent = '';
+
   String _redoTitle = '';
   String _redoContent = '';
 
   // ============================================================
-  // Helpers
+  // حالة الواجهة
   // ============================================================
 
-  bool get hasTitle {
-    return titleController.text.trim().isNotEmpty;
-  }
+  bool get hasTitle => titleController.text.trim().isNotEmpty;
 
-  bool get hasContent {
-    return contentController.text.trim().isNotEmpty;
-  }
+  bool get hasContent => contentController.text.trim().isNotEmpty;
 
-  bool get hasAnyText {
-    return hasTitle || hasContent;
-  }
+  bool get hasAnyText => hasTitle || hasContent;
 
-  bool get canRedo {
-    return _redoTitle.isNotEmpty || _redoContent.isNotEmpty;
-  }
+  bool get canUndo =>
+      _previousTitle.isNotEmpty || _previousContent.isNotEmpty || hasAnyText;
+
+  bool get canRedo => _redoTitle.isNotEmpty || _redoContent.isNotEmpty;
 
   // ============================================================
-  // initState
+  // Init
   // ============================================================
 
   @override
   void initState() {
     super.initState();
 
-    fetchCategories();
-
     titleController.addListener(_onTextChanged);
+
     contentController.addListener(_onTextChanged);
+
+    fetchCategories();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -90,7 +98,7 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // مراقبة الكتابة
+  // مراقبة النص
   // ============================================================
 
   void _onTextChanged() {
@@ -105,16 +113,23 @@ class _AddNotePageState extends State<AddNotePage> {
 
   Future<void> fetchCategories() async {
     try {
-      final QuerySnapshot<Map<String, dynamic>> snapshot =
-          await FirebaseFirestore.instance
-              .collection('categories')
-              .orderBy('createdAt', descending: false)
-              .get();
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+
+      try {
+        snapshot = await FirebaseFirestore.instance
+            .collection('categories')
+            .orderBy('createdAt', descending: false)
+            .get();
+      } catch (_) {
+        snapshot = await FirebaseFirestore.instance
+            .collection('categories')
+            .get();
+      }
 
       final List<String> loadedCategories = [];
 
       for (final doc in snapshot.docs) {
-        final data = doc.data();
+        final Map<String, dynamic> data = doc.data();
 
         final String name = (data['name'] ?? '').toString().trim();
 
@@ -129,48 +144,15 @@ class _AddNotePageState extends State<AddNotePage> {
         categories = loadedCategories;
         isLoadingCategories = false;
       });
-
-      debugPrint('عدد التصنيفات: ${categories.length}');
-      debugPrint('التصنيفات: $categories');
     } catch (e) {
-      debugPrint('خطأ في جلب التصنيفات: $e');
+      debugPrint('fetchCategories error: $e');
 
-      // إذا كان orderBy يسبب مشكلة بسبب createdAt،
-      // نعيد القراءة بدون ترتيب.
-      try {
-        final QuerySnapshot<Map<String, dynamic>> snapshot =
-            await FirebaseFirestore.instance.collection('categories').get();
+      if (!mounted) return;
 
-        final List<String> loadedCategories = [];
-
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-
-          final String name = (data['name'] ?? '').toString().trim();
-
-          if (name.isNotEmpty && !loadedCategories.contains(name)) {
-            loadedCategories.add(name);
-          }
-        }
-
-        if (!mounted) return;
-
-        setState(() {
-          categories = loadedCategories;
-          isLoadingCategories = false;
-        });
-
-        debugPrint('التصنيفات بعد المحاولة الثانية: $categories');
-      } catch (e2) {
-        debugPrint('خطأ المحاولة الثانية: $e2');
-
-        if (!mounted) return;
-
-        setState(() {
-          categories = [];
-          isLoadingCategories = false;
-        });
-      }
+      setState(() {
+        categories = [];
+        isLoadingCategories = false;
+      });
     }
   }
 
@@ -184,14 +166,19 @@ class _AddNotePageState extends State<AddNotePage> {
     FocusScope.of(context).unfocus();
 
     final String title = titleController.text.trim();
+
     final String content = contentController.text.trim();
 
-    if (!hasAnyText) {
+    // ----------------------------------------
+    // التحقق من البيانات
+    // ----------------------------------------
+
+    if (title.isEmpty && content.isEmpty) {
       _showMessage('اكتب شيئًا في الملاحظة أولاً');
       return;
     }
 
-    if (!hasTitle) {
+    if (title.isEmpty) {
       _showMessage('الرجاء كتابة عنوان الملاحظة');
 
       if (mounted) {
@@ -205,7 +192,6 @@ class _AddNotePageState extends State<AddNotePage> {
 
     if (user == null) {
       _showMessage('يجب تسجيل الدخول أولاً', isError: true);
-
       return;
     }
 
@@ -240,7 +226,7 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // رسالة
+  // الرسائل
   // ============================================================
 
   void _showMessage(String message, {bool isError = false}) {
@@ -250,9 +236,15 @@ class _AddNotePageState extends State<AddNotePage> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, textAlign: TextAlign.right),
-        backgroundColor: isError ? Colors.redAccent : null,
+        content: Text(
+          message,
+          textAlign: TextAlign.right,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: isError ? Colors.redAccent : textColor,
         behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -265,47 +257,70 @@ class _AddNotePageState extends State<AddNotePage> {
   void showCategoryPicker() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: paperColor,
+      backgroundColor: surfaceColor,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (BuildContext bottomSheetContext) {
+      builder: (BuildContext sheetContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 25),
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // المقبض
-                    Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: secondaryText.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                    ),
+                    _buildSheetHandle(),
 
                     const SizedBox(height: 20),
 
                     // العنوان
-                    const Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        'اختر التصنيف',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                    Row(
+                      children: [
+                        Container(
+                          width: 43,
+                          height: 43,
+                          decoration: BoxDecoration(
+                            color: accentLight,
+                            borderRadius: BorderRadius.circular(13),
+                          ),
+                          child: const Icon(
+                            Icons.folder_open_rounded,
+                            color: accentColor,
+                            size: 22,
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 11),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'تصنيف الملاحظة',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              SizedBox(height: 3),
+                              Text(
+                                'اختر مكان حفظ الملاحظة',
+                                style: TextStyle(
+                                  color: secondaryText,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
 
-                    const SizedBox(height: 15),
+                    const SizedBox(height: 18),
 
                     // غير مصنف
                     _categoryItem(
@@ -318,44 +333,22 @@ class _AddNotePageState extends State<AddNotePage> {
                           selectedCategory = null;
                         });
 
-                        Navigator.pop(bottomSheetContext);
+                        Navigator.pop(sheetContext);
                       },
                     ),
 
-                    const SizedBox(height: 4),
-
-                    // التصنيفات
                     if (isLoadingCategories)
                       const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
+                        padding: EdgeInsets.symmetric(vertical: 35),
                         child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                          strokeWidth: 2.2,
                           color: accentColor,
                         ),
                       )
                     else if (categories.isEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 25),
-                        child: const Column(
-                          children: [
-                            Icon(
-                              Icons.folder_open_outlined,
-                              color: secondaryText,
-                              size: 38,
-                            ),
-                            SizedBox(height: 10),
-                            Text(
-                              'لا توجد تصنيفات أخرى',
-                              style: TextStyle(
-                                color: secondaryText,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
+                      _buildEmptyCategories()
+                    else ...[
+                      const SizedBox(height: 5),
                       ...categories.map((String category) {
                         return _categoryItem(
                           name: category,
@@ -365,10 +358,11 @@ class _AddNotePageState extends State<AddNotePage> {
                               selectedCategory = category;
                             });
 
-                            Navigator.pop(bottomSheetContext);
+                            Navigator.pop(sheetContext);
                           },
                         );
                       }),
+                    ],
                   ],
                 ),
               ),
@@ -376,6 +370,21 @@ class _AddNotePageState extends State<AddNotePage> {
           ),
         );
       },
+    );
+  }
+
+  // ============================================================
+  // المقبض
+  // ============================================================
+
+  Widget _buildSheetHandle() {
+    return Container(
+      width: 42,
+      height: 5,
+      decoration: BoxDecoration(
+        color: secondaryText.withOpacity(0.25),
+        borderRadius: BorderRadius.circular(20),
+      ),
     );
   }
 
@@ -391,32 +400,27 @@ class _AddNotePageState extends State<AddNotePage> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          margin: const EdgeInsets.only(bottom: 5),
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: selected
-                ? Colors.white.withOpacity(0.75)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
-            border: selected
-                ? Border.all(color: accentColor.withOpacity(0.25))
-                : null,
+            color: selected ? accentLight : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? accentColor.withOpacity(0.18) : dividerColor,
+            ),
           ),
           child: Row(
             children: [
-              // أيقونة المجلد
               Container(
-                width: 38,
-                height: 38,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: selected
-                      ? accentColor.withOpacity(0.12)
-                      : Colors.white.withOpacity(0.55),
-                  borderRadius: BorderRadius.circular(11),
+                  color: selected ? Colors.white : const Color(0xFFFFFCF4),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   name == 'غير مصنف'
@@ -427,9 +431,8 @@ class _AddNotePageState extends State<AddNotePage> {
                 ),
               ),
 
-              const SizedBox(width: 12),
+              const SizedBox(width: 11),
 
-              // اسم التصنيف
               Expanded(
                 child: Text(
                   name,
@@ -437,22 +440,49 @@ class _AddNotePageState extends State<AddNotePage> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: textColor,
-                    fontSize: 15,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    fontSize: 14,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
                   ),
                 ),
               ),
 
-              // علامة الاختيار
               if (selected)
                 const Icon(
                   Icons.check_circle_rounded,
                   color: accentColor,
-                  size: 22,
+                  size: 21,
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // لا توجد تصنيفات
+  // ============================================================
+
+  Widget _buildEmptyCategories() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 30),
+      child: Column(
+        children: [
+          Icon(
+            Icons.folder_open_outlined,
+            color: secondaryText.withOpacity(0.65),
+            size: 38,
+          ),
+          const SizedBox(height: 9),
+          const Text(
+            'لا توجد تصنيفات أخرى',
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -467,22 +497,26 @@ class _AddNotePageState extends State<AddNotePage> {
     }
 
     _redoTitle = titleController.text;
+
     _redoContent = contentController.text;
 
-    final String currentTitle = titleController.text;
-    final String currentContent = contentController.text;
+    final String title = titleController.text;
 
-    if (currentContent.isNotEmpty) {
-      contentController.text = currentContent.substring(
-        0,
-        currentContent.length - 1,
-      );
+    final String content = contentController.text;
+
+    // نحفظ الحالة الحالية
+    _previousTitle = title;
+    _previousContent = content;
+
+    // إزالة آخر حرف من المحتوى أولاً
+    if (content.isNotEmpty) {
+      contentController.text = content.substring(0, content.length - 1);
 
       contentController.selection = TextSelection.collapsed(
         offset: contentController.text.length,
       );
-    } else if (currentTitle.isNotEmpty) {
-      titleController.text = currentTitle.substring(0, currentTitle.length - 1);
+    } else if (title.isNotEmpty) {
+      titleController.text = title.substring(0, title.length - 1);
 
       titleController.selection = TextSelection.collapsed(
         offset: titleController.text.length,
@@ -503,6 +537,7 @@ class _AddNotePageState extends State<AddNotePage> {
     }
 
     titleController.text = _redoTitle;
+
     contentController.text = _redoContent;
 
     titleController.selection = TextSelection.collapsed(
@@ -512,6 +547,9 @@ class _AddNotePageState extends State<AddNotePage> {
     contentController.selection = TextSelection.collapsed(
       offset: contentController.text.length,
     );
+
+    _previousTitle = '';
+    _previousContent = '';
 
     _redoTitle = '';
     _redoContent = '';
@@ -524,10 +562,7 @@ class _AddNotePageState extends State<AddNotePage> {
   // ============================================================
 
   void shareNote() {
-    final String title = titleController.text.trim();
-    final String content = contentController.text.trim();
-
-    if (title.isEmpty && content.isEmpty) {
+    if (!hasAnyText) {
       _showMessage('لا توجد ملاحظة لمشاركتها');
       return;
     }
@@ -536,35 +571,42 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // القائمة
+  // المزيد
   // ============================================================
 
   void showMoreOptions() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: paperColor,
+      backgroundColor: surfaceColor,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (BuildContext sheetContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 42,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: secondaryText.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(20),
+                  _buildSheetHandle(),
+
+                  const SizedBox(height: 18),
+
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'خيارات الملاحظة',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
 
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 12),
 
                   _moreOption(
                     icon: Icons.delete_outline_rounded,
@@ -581,7 +623,7 @@ class _AddNotePageState extends State<AddNotePage> {
                     onTap: () {
                       Navigator.pop(sheetContext);
 
-                      _showMessage('يمكن تفعيل التثبيت لاحقًا');
+                      _showMessage('يمكن تفعيل التثبيت بعد حفظ الملاحظة');
                     },
                   ),
 
@@ -591,7 +633,7 @@ class _AddNotePageState extends State<AddNotePage> {
                     onTap: () {
                       Navigator.pop(sheetContext);
 
-                      _showMessage('يمكن تفعيل المفضلة لاحقًا');
+                      _showMessage('يمكن تفعيل المفضلة بعد حفظ الملاحظة');
                     },
                   ),
                 ],
@@ -604,7 +646,7 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // عناصر القائمة
+  // عنصر القائمة
   // ============================================================
 
   Widget _moreOption({
@@ -615,19 +657,31 @@ class _AddNotePageState extends State<AddNotePage> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 15),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 13),
           child: Row(
             children: [
-              Icon(icon, color: textColor, size: 23),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: textColor, size: 21),
+              ),
 
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
 
               Text(
                 title,
-                style: const TextStyle(color: textColor, fontSize: 15),
+                style: const TextStyle(
+                  color: textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -637,138 +691,21 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // مسح الملاحظة
+  // مسح النص
   // ============================================================
 
   void _clearNote() {
     titleController.clear();
     contentController.clear();
 
+    _previousTitle = '';
+    _previousContent = '';
     _redoTitle = '';
     _redoContent = '';
 
-    setState(() {});
-
     titleFocusNode.requestFocus();
-  }
 
-  // ============================================================
-  // زر الأدوات
-  // ============================================================
-
-  Widget _toolButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    bool enabled = true,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: enabled ? onTap : null,
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: Icon(
-            icon,
-            color: enabled
-                ? textColor.withOpacity(0.8)
-                : textColor.withOpacity(0.25),
-            size: 21,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // الشريط السفلي
-  // ============================================================
-
-  Widget _buildBottomToolbar() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.94),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.10),
-            blurRadius: 18,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            // تنسيق
-            _toolButton(
-              icon: Icons.text_fields_rounded,
-              onTap: _showFormatting,
-            ),
-
-            // نقاط
-            _toolButton(
-              icon: Icons.format_list_bulleted_rounded,
-              onTap: () {
-                _insertText('\n• ');
-              },
-            ),
-
-            // قائمة تحقق
-            _toolButton(
-              icon: Icons.check_box_outlined,
-              onTap: () {
-                _insertText('\n☐ ');
-              },
-            ),
-
-            // شطب
-            _toolButton(
-              icon: Icons.strikethrough_s_rounded,
-              onTap: () {
-                _showMessage('تنسيق النص المتقدم قريبًا');
-              },
-            ),
-
-            // إيموجي
-            _toolButton(
-              icon: Icons.emoji_emotions_outlined,
-              onTap: () {
-                _insertText(' 😊');
-              },
-            ),
-
-            // صورة
-            _toolButton(
-              icon: Icons.image_outlined,
-              onTap: () {
-                _showComingSoon('إضافة صورة');
-              },
-            ),
-
-            // ملف
-            _toolButton(
-              icon: Icons.attach_file_rounded,
-              onTap: () {
-                _showComingSoon('إرفاق ملف');
-              },
-            ),
-
-            // تسجيل
-            _toolButton(
-              icon: Icons.mic_none_rounded,
-              onTap: () {
-                _showComingSoon('التسجيل الصوتي');
-              },
-            ),
-          ],
-        ),
-      ),
-    );
+    setState(() {});
   }
 
   // ============================================================
@@ -804,35 +741,28 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // التنسيق
+  // أدوات النص
   // ============================================================
 
   void _showFormatting() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: paperColor,
+      backgroundColor: surfaceColor,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (BuildContext sheetContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 25),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 42,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: secondaryText.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
+                  _buildSheetHandle(),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 19),
 
                   const Align(
                     alignment: Alignment.centerRight,
@@ -840,25 +770,25 @@ class _AddNotePageState extends State<AddNotePage> {
                       'تنسيق النص',
                       style: TextStyle(
                         color: textColor,
-                        fontSize: 19,
-                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
 
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _formatItem(text: 'B', bold: true),
-                      _formatItem(text: 'I', italic: true),
-                      _formatItem(text: 'U', underline: true),
-                      _formatItem(text: 'Aa'),
+                      Expanded(child: _formatItem(text: 'B', bold: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _formatItem(text: 'I', italic: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _formatItem(text: 'U', underline: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _formatItem(text: 'Aa')),
                     ],
                   ),
-
-                  const SizedBox(height: 15),
                 ],
               ),
             ),
@@ -878,24 +808,30 @@ class _AddNotePageState extends State<AddNotePage> {
     bool italic = false,
     bool underline = false,
   }) {
-    return Container(
-      width: 55,
-      height: 48,
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.75),
-        borderRadius: BorderRadius.circular(13),
-      ),
-      child: Center(
-        child: Text(
-          text,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 18,
-            fontWeight: bold ? FontWeight.bold : FontWeight.w500,
-            fontStyle: italic ? FontStyle.italic : FontStyle.normal,
-            decoration: underline
-                ? TextDecoration.underline
-                : TextDecoration.none,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(15),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(15),
+        onTap: () {
+          Navigator.pop(context);
+          _showMessage('تنسيق النص المتقدم قريبًا');
+        },
+        child: SizedBox(
+          height: 52,
+          child: Center(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 19,
+                fontWeight: bold ? FontWeight.bold : FontWeight.w500,
+                fontStyle: italic ? FontStyle.italic : FontStyle.normal,
+                decoration: underline
+                    ? TextDecoration.underline
+                    : TextDecoration.none,
+              ),
+            ),
           ),
         ),
       ),
@@ -903,7 +839,120 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // Coming Soon
+  // زر الأدوات
+  // ============================================================
+
+  Widget _toolButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool enabled = true,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(
+            icon,
+            color: enabled
+                ? textColor.withOpacity(0.78)
+                : textColor.withOpacity(0.22),
+            size: 21,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // شريط الأدوات السفلي
+  // ============================================================
+
+  Widget _buildBottomToolbar() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(color: dividerColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.07),
+            blurRadius: 18,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _toolButton(
+              icon: Icons.text_fields_rounded,
+              onTap: _showFormatting,
+            ),
+
+            _toolButton(
+              icon: Icons.format_list_bulleted_rounded,
+              onTap: () {
+                _insertText('\n• ');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.check_box_outlined,
+              onTap: () {
+                _insertText('\n☐ ');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.strikethrough_s_rounded,
+              onTap: () {
+                _showMessage('تنسيق النص المتقدم قريبًا');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.emoji_emotions_outlined,
+              onTap: () {
+                _insertText(' 😊');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.image_outlined,
+              onTap: () {
+                _showComingSoon('إضافة صورة');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.attach_file_rounded,
+              onTap: () {
+                _showComingSoon('إرفاق ملف');
+              },
+            ),
+
+            _toolButton(
+              icon: Icons.mic_none_rounded,
+              onTap: () {
+                _showComingSoon('التسجيل الصوتي');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // ميزات مستقبلية
   // ============================================================
 
   void _showComingSoon(String feature) {
@@ -916,14 +965,15 @@ class _AddNotePageState extends State<AddNotePage> {
 
   String getFormattedDate() {
     final DateTime date = createdAt;
+
     final DateTime now = DateTime.now();
 
-    final bool isToday =
+    final bool today =
         date.year == now.year && date.month == now.month && date.day == now.day;
 
     final String time = _formatTime(date);
 
-    if (isToday) {
+    if (today) {
       return 'اليوم، $time';
     }
 
@@ -951,12 +1001,343 @@ class _AddNotePageState extends State<AddNotePage> {
   }
 
   // ============================================================
-  // dispose
+  // Header
+  // ============================================================
+
+  Widget _buildTopBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(13, 7, 13, 4),
+      child: Row(
+        children: [
+          // ==============================================
+          // الرجوع
+          // ==============================================
+          _headerIconButton(
+            icon: Icons.arrow_forward_ios_rounded,
+            tooltip: 'رجوع',
+            onTap: isSaving
+                ? null
+                : () {
+                    Navigator.of(context).pop();
+                  },
+          ),
+
+          const SizedBox(width: 3),
+
+          // ==============================================
+          // العنوان
+          // ==============================================
+          const Expanded(
+            child: Text(
+              'ملاحظة جديدة',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+
+          // ==============================================
+          // المزيد
+          // ==============================================
+          _headerIconButton(
+            icon: Icons.more_horiz_rounded,
+            tooltip: 'المزيد',
+            onTap: isSaving ? null : showMoreOptions,
+          ),
+
+          // ==============================================
+          // مشاركة
+          // ==============================================
+          _headerIconButton(
+            icon: Icons.ios_share_outlined,
+            tooltip: 'مشاركة',
+            onTap: isSaving ? null : shareNote,
+          ),
+
+          // ==============================================
+          // Undo
+          // ==============================================
+          _headerIconButton(
+            icon: Icons.undo_rounded,
+            tooltip: 'تراجع',
+            enabled: hasAnyText,
+            onTap: isSaving || !hasAnyText ? null : undoText,
+          ),
+
+          // ==============================================
+          // Redo
+          // ==============================================
+          _headerIconButton(
+            icon: Icons.redo_rounded,
+            tooltip: 'إعادة',
+            enabled: canRedo,
+            onTap: isSaving || !canRedo ? null : redoText,
+          ),
+
+          const SizedBox(width: 4),
+
+          // ==============================================
+          // حفظ
+          // ==============================================
+          GestureDetector(
+            onTap: isSaving ? null : saveNote,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: accentColor.withOpacity(0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: accentColor.withOpacity(0.08),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accentColor,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.check_rounded,
+                        color: accentColor,
+                        size: 26,
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // زر Header
+  // ============================================================
+
+  Widget _headerIconButton({
+    required IconData icon,
+    required VoidCallback? onTap,
+    required String tooltip,
+    bool enabled = true,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            width: 38,
+            height: 42,
+            child: Icon(
+              icon,
+              size: 20,
+              color: enabled
+                  ? textColor.withOpacity(0.78)
+                  : textColor.withOpacity(0.22),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // التصنيف + التاريخ
+  // ============================================================
+
+  Widget _buildNoteMeta() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 0, 22, 4),
+      child: Row(
+        children: [
+          // ==============================================
+          // التصنيف
+          // ==============================================
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+            child: InkWell(
+              onTap: isSaving ? null : showCategoryPicker,
+              borderRadius: BorderRadius.circular(11),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.65),
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: dividerColor),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.folder_outlined,
+                      color: secondaryText,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 5),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 100),
+                      child: Text(
+                        selectedCategory ?? 'غير مصنف',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: secondaryText,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: secondaryText,
+                      size: 16,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 10),
+
+          // ==============================================
+          // خط فاصل
+          // ==============================================
+          Container(width: 1, height: 17, color: dividerColor),
+
+          const SizedBox(width: 10),
+
+          // ==============================================
+          // التاريخ
+          // ==============================================
+          const Icon(Icons.access_time_rounded, color: secondaryText, size: 14),
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: Text(
+              getFormattedDate(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: secondaryText,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Body
+  // ============================================================
+
+  Widget _buildEditor() {
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(22, 17, 22, 30),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ==============================================
+          // العنوان
+          // ==============================================
+          TextField(
+            controller: titleController,
+            focusNode: titleFocusNode,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(
+              color: textColor,
+              fontSize: 28,
+              height: 1.25,
+              fontWeight: FontWeight.w800,
+            ),
+            decoration: const InputDecoration(
+              hintText: 'عنوان الملاحظة',
+              hintStyle: TextStyle(
+                color: lightText,
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+              ),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+              isDense: true,
+            ),
+            onSubmitted: (_) {
+              contentFocusNode.requestFocus();
+            },
+          ),
+
+          const SizedBox(height: 15),
+
+          // ==============================================
+          // المحتوى
+          // ==============================================
+          TextField(
+            controller: contentController,
+            focusNode: contentFocusNode,
+            minLines: 20,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: textColor,
+              fontSize: 17,
+              height: 1.75,
+              fontWeight: FontWeight.w400,
+            ),
+            decoration: const InputDecoration(
+              hintText: 'ابدأ بكتابة ملاحظتك...',
+              hintStyle: TextStyle(
+                color: lightText,
+                fontSize: 17,
+                height: 1.75,
+              ),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Dispose
   // ============================================================
 
   @override
   void dispose() {
     titleController.removeListener(_onTextChanged);
+
     contentController.removeListener(_onTextChanged);
 
     titleController.dispose();
@@ -974,295 +1355,50 @@ class _AddNotePageState extends State<AddNotePage> {
 
   @override
   Widget build(BuildContext context) {
-    final bool noteHasText = hasAnyText;
-    final bool redoAvailable = canRedo;
-
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: paperColor,
         resizeToAvoidBottomInset: true,
 
-        // ========================================================
+        // ======================================================
         // AppBar
-        // ========================================================
-        appBar: AppBar(
-          backgroundColor: paperColor,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          surfaceTintColor: Colors.transparent,
-          automaticallyImplyLeading: false,
-          toolbarHeight: 62,
-          titleSpacing: 3,
-
-          title: Row(
-            children: [
-              // المزيد
-              IconButton(
-                tooltip: 'المزيد',
-                onPressed: isSaving ? null : showMoreOptions,
-                icon: const Icon(
-                  Icons.more_vert_rounded,
-                  color: textColor,
-                  size: 24,
-                ),
-              ),
-
-              // مشاركة
-              IconButton(
-                tooltip: 'مشاركة',
-                onPressed: isSaving ? null : shareNote,
-                icon: const Icon(
-                  Icons.ios_share_rounded,
-                  color: textColor,
-                  size: 21,
-                ),
-              ),
-
-              // Undo
-              IconButton(
-                tooltip: 'تراجع',
-                onPressed: isSaving || !noteHasText ? null : undoText,
-                icon: Icon(
-                  Icons.undo_rounded,
-                  color: !noteHasText ? textColor.withOpacity(0.25) : textColor,
-                  size: 22,
-                ),
-              ),
-
-              // Redo
-              IconButton(
-                tooltip: 'إعادة',
-                onPressed: isSaving || !redoAvailable ? null : redoText,
-                icon: Icon(
-                  Icons.redo_rounded,
-                  color: !redoAvailable
-                      ? textColor.withOpacity(0.25)
-                      : textColor,
-                  size: 22,
-                ),
-              ),
-
-              const Spacer(),
-
-              // ==================================================
-              // التصنيف
-              // ==================================================
-              GestureDetector(
-                onTap: isSaving ? null : showCategoryPicker,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.45),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.folder_outlined,
-                        color: secondaryText,
-                        size: 17,
-                      ),
-
-                      const SizedBox(width: 4),
-
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 90),
-                        child: Text(
-                          selectedCategory ?? 'غير مصنف',
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: secondaryText,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-
-                      const Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: secondaryText,
-                        size: 18,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(width: 3),
-
-              // رجوع
-              IconButton(
-                tooltip: 'رجوع',
-                onPressed: isSaving
-                    ? null
-                    : () {
-                        Navigator.of(context).pop();
-                      },
-                icon: const Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  color: textColor,
-                  size: 19,
-                ),
-              ),
-
-              // حفظ
-              GestureDetector(
-                onTap: isSaving ? null : saveNote,
-                child: Container(
-                  width: 42,
-                  height: 42,
-                  margin: const EdgeInsets.only(left: 5),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: isSaving
-                        ? const SizedBox(
-                            width: 19,
-                            height: 19,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: accentColor,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.check_rounded,
-                            color: accentColor,
-                            size: 27,
-                          ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+        // ======================================================
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(58),
+          child: SafeArea(bottom: false, child: _buildTopBar()),
         ),
 
-        // ========================================================
+        // ======================================================
         // Body
-        // ========================================================
+        // ======================================================
         body: SafeArea(
+          top: false,
           child: Column(
             children: [
-              // ==================================================
-              // التاريخ
-              // ==================================================
+              // -----------------------------------------------
+              // معلومات الملاحظة
+              // -----------------------------------------------
+              _buildNoteMeta(),
+
+              const SizedBox(height: 4),
+
+              // -----------------------------------------------
+              // خط بسيط
+              // -----------------------------------------------
               Padding(
-                padding: const EdgeInsets.fromLTRB(22, 2, 22, 4),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.access_time_rounded,
-                      color: secondaryText,
-                      size: 14,
-                    ),
-
-                    const SizedBox(width: 5),
-
-                    Text(
-                      getFormattedDate(),
-                      style: const TextStyle(
-                        color: secondaryText,
-                        fontSize: 11.5,
-                      ),
-                    ),
-                  ],
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                child: Container(height: 1, color: dividerColor),
               ),
 
-              // ==================================================
-              // الكتابة
-              // ==================================================
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(22, 12, 22, 25),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // ==================================================
-                      // العنوان
-                      // ==================================================
-                      TextField(
-                        controller: titleController,
-                        focusNode: titleFocusNode,
-                        textDirection: TextDirection.rtl,
-                        textAlign: TextAlign.right,
-                        textInputAction: TextInputAction.next,
-                        style: const TextStyle(
-                          color: textColor,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          height: 1.25,
-                        ),
-                        decoration: const InputDecoration(
-                          hintText: 'العنوان',
-                          hintStyle: TextStyle(
-                            color: Color(0xFFB5AD87),
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          disabledBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
-                        ),
-                        onSubmitted: (_) {
-                          contentFocusNode.requestFocus();
-                        },
-                      ),
+              // -----------------------------------------------
+              // المحرر
+              // -----------------------------------------------
+              Expanded(child: _buildEditor()),
 
-                      const SizedBox(height: 12),
-
-                      // ==================================================
-                      // المحتوى
-                      // ==================================================
-                      TextField(
-                        controller: contentController,
-                        focusNode: contentFocusNode,
-                        minLines: 18,
-                        maxLines: null,
-                        keyboardType: TextInputType.multiline,
-                        textDirection: TextDirection.rtl,
-                        textAlign: TextAlign.right,
-                        textCapitalization: TextCapitalization.sentences,
-                        style: const TextStyle(
-                          color: textColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w400,
-                          height: 1.7,
-                        ),
-                        decoration: const InputDecoration(
-                          hintText: 'أدخل محتوى الملاحظة هنا',
-                          hintStyle: TextStyle(
-                            color: Color(0xFFB5AD87),
-                            fontSize: 17,
-                            height: 1.7,
-                          ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          disabledBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ==================================================
-              // الأدوات
-              // ==================================================
+              // -----------------------------------------------
+              // أدوات الكتابة
+              // -----------------------------------------------
               _buildBottomToolbar(),
             ],
           ),

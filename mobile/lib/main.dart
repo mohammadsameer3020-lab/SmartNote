@@ -110,8 +110,11 @@ import 'package:mobile/categres/categres.dart';
 import 'package:mobile/core/theme/app_theme.dart';
 
 import 'package:mobile/firebase_options.dart';
-import 'package:mobile/home/home.dart';
+
 import 'package:mobile/notes/addNode.dart';
+import 'package:mobile/notes/hidden_notes.dart';
+import 'package:mobile/notes/note_home_screen.dart';
+import 'package:mobile/notes/pinned_notes.dart';
 
 // import 'package:kids_learning_app/provider/add_provider.dart';
 
@@ -177,8 +180,9 @@ class _MyAppState extends State<MyApp> {
           : const Login(),
       routes: {
         // Auth
+        'HiddenNotesPage': (context) => const HiddenNotesPage(),
         'AddNotePage': (context) => const AddNotePage(),
-
+        'PinnedNotesPage': (context) => const PinnedNotesPage(),
         "signup": (context) => const siginup(),
         "login": (context) => const Login(),
         "forgot_password": (context) => const ForgotPassword(),
